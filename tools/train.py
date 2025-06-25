@@ -43,7 +43,7 @@ def parse_config():
     parser.add_argument('--start_epoch', type=int, default=0, help='')
     parser.add_argument('--num_epochs_to_eval', type=int, default=0, help='number of checkpoints to be evaluated')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
-    
+    parser.add_argument('--fuse_conv_bn', action='store_true', default=False, help='')
     parser.add_argument('--use_tqdm_to_record', action='store_true', default=False, help='if True, the intermediate losses will not be logged to file, only tqdm will be used')
     parser.add_argument('--logger_iter_interval', type=int, default=50, help='')
     parser.add_argument('--ckpt_save_time_interval', type=int, default=300, help='in terms of seconds')
@@ -129,7 +129,7 @@ def main():
         seed=666 if args.fix_random_seed else None
     )
 
-    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=train_set)
+    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=train_set,logger=logger)
     if args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model.cuda()

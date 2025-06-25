@@ -181,6 +181,9 @@ def decode_bbox_from_heatmap(heatmap, rot_cos, rot_sin, center, center_z, dim,
         heatmap = _nms(heatmap)
 
     scores, inds, class_ids, ys, xs = _topk(heatmap, K=K)
+    iou = None
+    if iou is not None:
+        iou = _transpose_and_gather_feat(iou, inds).view(batch_size, K, 1)
     center = _transpose_and_gather_feat(center, inds).view(batch_size, K, 2)
     rot_sin = _transpose_and_gather_feat(rot_sin, inds).view(batch_size, K, 1)
     rot_cos = _transpose_and_gather_feat(rot_cos, inds).view(batch_size, K, 1)
@@ -199,11 +202,11 @@ def decode_bbox_from_heatmap(heatmap, rot_cos, rot_sin, center, center_z, dim,
         vel = _transpose_and_gather_feat(vel, inds).view(batch_size, K, 2)
         box_part_list.append(vel)
 
-    if iou is not None:
-        iou = _transpose_and_gather_feat(iou, inds).view(batch_size, K)
-
     final_box_preds = torch.cat((box_part_list), dim=-1)
     final_scores = scores.view(batch_size, K)
+    final_ious = None
+    if iou is not None:
+        final_ious = ious.view(batch_size, K)
     final_class_ids = class_ids.view(batch_size, K)
 
     assert post_center_limit_range is not None
@@ -219,7 +222,7 @@ def decode_bbox_from_heatmap(heatmap, rot_cos, rot_sin, center, center_z, dim,
         cur_boxes = final_box_preds[k, cur_mask]
         cur_scores = final_scores[k, cur_mask]
         cur_labels = final_class_ids[k, cur_mask]
-
+        
         if circle_nms:
             assert False, 'not checked yet'
             centers = cur_boxes[:, [0, 1]]
@@ -229,7 +232,7 @@ def decode_bbox_from_heatmap(heatmap, rot_cos, rot_sin, center, center_z, dim,
             cur_boxes = cur_boxes[keep]
             cur_scores = cur_scores[keep]
             cur_labels = cur_labels[keep]
-
+        
         ret_pred_dicts.append({
             'pred_boxes': cur_boxes,
             'pred_scores': cur_scores,

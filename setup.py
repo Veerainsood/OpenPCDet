@@ -42,7 +42,10 @@ if __name__ == '__main__':
             'tensorboardX',
             'easydict',
             'pyyaml',
-            'scikit-image',
+            'pycocotools',
+            'terminaltables',
+            'timm',
+            #'scikit-image',
             'tqdm',
             'SharedArray',
             # 'spconv',  # spconv has different names depending on the cuda version
@@ -89,6 +92,8 @@ if __name__ == '__main__':
                     'src/pointnet2_api.cpp',
                     'src/ball_query.cpp',
                     'src/ball_query_gpu.cu',
+                    # 'src/pointnet2_batch.cpp',
+                    # 'src/ball_query_gpu.cpp',
                     'src/group_points.cpp',
                     'src/group_points_gpu.cu',
                     'src/sampling.cpp',
@@ -107,7 +112,9 @@ if __name__ == '__main__':
                 sources=[
                     'src/pointnet2_api.cpp',
                     'src/ball_query.cpp',
+                    # 'src/pointnet2_batch.cpp',
                     'src/ball_query_gpu.cu',
+                    # 'src/ball_query_gpu.cpp',
                     'src/group_points.cpp',
                     'src/group_points_gpu.cu',
                     'src/interpolate.cpp',
@@ -118,12 +125,34 @@ if __name__ == '__main__':
                 ],
             ),
             make_cuda_ext(
+                name='center_ops_cuda',
+                module='pcdet.ops.center_ops',
+                sources=[
+                    'src/center_ops_api.cpp',
+                    'src/draw_center.cpp',
+                    'src/draw_center_kernel.cu'
+                ],
+            ),
+            make_cuda_ext(
                 name="bev_pool_ext",
                 module="pcdet.ops.bev_pool",
                 sources=[
                     "src/bev_pool.cpp",
                     "src/bev_pool_cuda.cu",
                 ],
+            ),
+            make_cuda_ext(
+                name='rv_ops_cuda',
+                module='pcdet.ops.rv_ops',
+                sources=[
+                    'src/rv_ops_api.cpp',
+                    'src/rv_assigner.cpp',
+                    'src/rv_assigner_gpu.cu',
+                    'src/rv_query.cpp',
+                    'src/rv_query_gpu.cu',
+                    'src/rv_group.cpp',
+                    'src/rv_group_gpu.cu'
+                ]
             ),
             make_cuda_ext(
                 name='ingroup_inds_cuda',

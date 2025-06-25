@@ -2,12 +2,13 @@ import pickle
 import time
 
 import numpy as np
+from pcdet import models
 import torch
 import tqdm
 
 from pcdet.models import load_data_to_gpu
 from pcdet.utils import common_utils
-
+from pcdet.models.model_utils import fusion_utils
 
 def statistics_info(cfg, ret_dict, metric, disp_dict):
     for cur_thresh in cfg.MODEL.POST_PROCESSING.RECALL_THRESH_LIST:
@@ -19,7 +20,7 @@ def statistics_info(cfg, ret_dict, metric, disp_dict):
         '(%d, %d) / %d' % (metric['recall_roi_%s' % str(min_thresh)], metric['recall_rcnn_%s' % str(min_thresh)], metric['gt_num'])
 
 
-def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=False, result_dir=None):
+def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=False, result_dir=None , fuse_conv_bn=False):
     result_dir.mkdir(parents=True, exist_ok=True)
 
     final_output_dir = result_dir / 'final_result' / 'data'
@@ -36,6 +37,9 @@ def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=Fal
     dataset = dataloader.dataset
     class_names = dataset.class_names
     det_annos = []
+    
+    if fuse_conv_bn:
+        model = fusion_utils.fuse_module(model)
 
     if getattr(args, 'infer_time', False):
         start_iter = int(len(dataloader) * 0.1)
@@ -55,7 +59,11 @@ def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=Fal
     if cfg.LOCAL_RANK == 0:
         progress_bar = tqdm.tqdm(total=len(dataloader), leave=True, desc='eval', dynamic_ncols=True)
     start_time = time.time()
+    run_time = 0
     for i, batch_dict in enumerate(dataloader):
+        torch.cuda.synchronize()
+        run_start_time = time.time()
+
         load_data_to_gpu(batch_dict)
 
         if getattr(args, 'infer_time', False):
@@ -63,7 +71,10 @@ def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=Fal
 
         with torch.no_grad():
             pred_dicts, ret_dict = model(batch_dict)
-
+        torch.cuda.synchronize()
+        run_end_time = time.time()
+        run_duration = run_end_time - run_start_time
+        run_time += run_duration
         disp_dict = {}
 
         if getattr(args, 'infer_time', False):
@@ -89,9 +100,11 @@ def eval_one_epoch(cfg, args, model, dataloader, epoch_id, logger, dist_test=Fal
         rank, world_size = common_utils.get_dist_info()
         det_annos = common_utils.merge_results_dist(det_annos, len(dataset), tmpdir=result_dir / 'tmpdir')
         metric = common_utils.merge_results_dist([metric], world_size, tmpdir=result_dir / 'tmpdir')
-
+    else:
+        world_size = 1
     logger.info('*************** Performance of EPOCH %s *****************' % epoch_id)
-    sec_per_example = (time.time() - start_time) / len(dataloader.dataset)
+    logger.info('Run time per sample: %.4f second.' % (run_time / (len(dataloader.dataset) / world_size)))
+    sec_per_example = (time.time() - start_time) / (len(dataloader.dataset) / world_size)
     logger.info('Generate label finished(sec_per_example: %.4f second).' % sec_per_example)
 
     if cfg.LOCAL_RANK != 0:

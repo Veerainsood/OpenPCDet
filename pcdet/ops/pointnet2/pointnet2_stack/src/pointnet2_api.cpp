@@ -12,8 +12,9 @@
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("ball_query_wrapper", &ball_query_wrapper_stack, "ball_query_wrapper_stack");
     m.def("voxel_query_wrapper", &voxel_query_wrapper_stack, "voxel_query_wrapper_stack");
-
+    m.def("voxel_knn_query_wrapper", &voxel_knn_query_wrapper_stack, "voxel_knn_query_wrapper_stack");
     m.def("farthest_point_sampling_wrapper", &farthest_point_sampling_wrapper, "farthest_point_sampling_wrapper");
+    m.def("furthest_point_sampling_wrapper", &furthest_point_sampling_wrapper, "furthest_point_sampling_wrapper");
     m.def("stack_farthest_point_sampling_wrapper", &stack_farthest_point_sampling_wrapper, "stack_farthest_point_sampling_wrapper");
 
     m.def("group_points_wrapper", &group_points_wrapper_stack, "group_points_wrapper_stack");
@@ -28,4 +29,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     m.def("vector_pool_wrapper", &vector_pool_wrapper_stack, "vector_pool_grad_wrapper_stack");
     m.def("vector_pool_grad_wrapper", &vector_pool_grad_wrapper_stack, "vector_pool_grad_wrapper_stack");
+    m.def("k_interpolate_wrapper", &k_interpolate_wrapper_stack, "k_interpolate_wrapper_stack");
+    m.def("k_interpolate_grad_wrapper", &k_interpolate_grad_wrapper_stack, "k_interpolate_grad_wrapper_stack");
 }

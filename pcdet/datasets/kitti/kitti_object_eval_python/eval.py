@@ -2,7 +2,10 @@ import io as sysio
 
 import numba
 import numpy as np
-
+from numba.core.errors import NumbaPerformanceWarning, NumbaDeprecationWarning
+import warnings
+warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
+warnings.simplefilter('ignore', category=NumbaDeprecationWarning)
 from .rotate_iou import rotate_iou_gpu_eval
 
 

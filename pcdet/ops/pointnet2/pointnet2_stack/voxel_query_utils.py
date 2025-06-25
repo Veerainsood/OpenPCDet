@@ -48,6 +48,47 @@ class VoxelQuery(Function):
 voxel_query = VoxelQuery.apply
 
 
+class VoxelKNNQuery(Function):
+
+    @staticmethod
+    def forward(ctx, max_range: int, radius: float, nsample: int, xyz: torch.Tensor, \
+                    new_xyz: torch.Tensor, new_coords: torch.Tensor, point_indices: torch.Tensor):
+        """
+        Args:
+            ctx:
+            max_range: int, max range of voxels to be grouped
+            nsample: int, maximum number of features in the balls
+            new_coords: (M1 + M2, 4), [batch_id, z, y, x] cooridnates of keypoints
+            new_xyz_batch_cnt: (batch_size), [M1, M2, ...]
+            point_indices: (batch_size, Z, Y, X) 4-D tensor recording the point indices of voxels
+        Returns:
+            idx: (M1 + M2, nsample) tensor with the indicies of the features that form the query balls
+        """
+        assert new_xyz.is_contiguous()
+        assert xyz.is_contiguous()
+        assert new_coords.is_contiguous()
+        assert point_indices.is_contiguous()
+        assert nsample <= 128
+        M = new_coords.shape[0]
+        B, Z, Y, X = point_indices.shape
+        idx_dist2 = new_xyz.new_full((M, nsample), 1e10)
+        idx = new_xyz.new_full((M, nsample), -1).int()
+
+        z_range, y_range, x_range = max_range
+        pointnet2.voxel_knn_query_wrapper(M, Z, Y, X, nsample, radius, z_range, y_range, x_range, \
+                    new_xyz, xyz, new_coords, point_indices, idx, idx_dist2)
+
+        empty_ball_mask = (idx == -1)
+
+        return torch.sqrt(idx_dist2), idx, empty_ball_mask
+
+    @staticmethod
+    def backward(ctx, a=None):
+        return None, None, None, None
+
+voxel_knn_query = VoxelKNNQuery.apply
+
+
 class VoxelQueryAndGrouping(nn.Module):
     def __init__(self, max_range: int, radius: float, nsample: int):
         """

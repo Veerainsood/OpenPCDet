@@ -5,27 +5,82 @@ import torch.nn as nn
 from ...utils.spconv_utils import replace_feature, spconv
 
 
-def post_act_block(in_channels, out_channels, kernel_size, indice_key=None, stride=1, padding=0,
-                   conv_type='subm', norm_fn=None):
+def post_act_block(in_channels,
+                   out_channels,
+                   kernel_size,
+                   indice_key=None,
+                   stride=1,
+                   padding=0,
+                   conv_type='subm',
+                   norm_fn=None,
+                   dim=3):
+    """
+    A 2D/3D sparse block with conv → norm → ReLU wrapped in a Sequential.
 
-    if conv_type == 'subm':
-        conv = spconv.SubMConv3d(in_channels, out_channels, kernel_size, bias=False, indice_key=indice_key)
-    elif conv_type == 'spconv':
-        conv = spconv.SparseConv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding,
-                                   bias=False, indice_key=indice_key)
-    elif conv_type == 'inverseconv':
-        conv = spconv.SparseInverseConv3d(in_channels, out_channels, kernel_size, indice_key=indice_key, bias=False)
+    Args:
+      in_channels, out_channels, kernel_size, indice_key…      – as before
+      conv_type: 'subm' | 'spconv' | 'inverseconv'            – choose your op
+      norm_fn: e.g. partial(nn.BatchNorm1d, …)                – batchnorm factory
+      dim: 2 or 3                                             – spatial dimensionality
+    """
+    # pick the right class based on dim & conv_type
+    if dim == 2:
+        cls_map = {
+            'spconv'      : spconv.SparseConv2d,
+            'subm'        : spconv.SubMConv2d,
+            'inverseconv' : spconv.SparseInverseConv2d
+        }
+    elif dim == 3:
+        cls_map = {
+            'spconv'      : spconv.SparseConv3d,
+            'subm'        : spconv.SubMConv3d,
+            'inverseconv' : spconv.SparseInverseConv3d
+        }
     else:
-        raise NotImplementedError
+        raise ValueError(f"Unsupported dim={dim}, must be 2 or 3")
 
-    m = spconv.SparseSequential(
+    ConvLayer = cls_map.get(conv_type)
+    conv = None
+    if ConvLayer is None:
+        raise ValueError(f"Unknown conv_type={conv_type}")
+
+    if conv_type == 'spconv':
+        # spconv takes stride & padding
+        conv = ConvLayer(
+            in_channels, out_channels, kernel_size,
+            stride=stride,
+            padding=padding,
+            bias=False,
+            indice_key=indice_key
+        )
+
+    elif conv_type == 'subm':
+        # submanifold conv never strides or pads
+        conv = ConvLayer(
+            in_channels, out_channels, kernel_size,
+            bias=False,
+            indice_key=indice_key
+        )
+
+    elif conv_type == 'inverseconv':
+        # inverse conv takes (in, out, kernel, stride, indice_key[, bias])
+        conv = ConvLayer(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            indice_key=indice_key,          # positional!
+            bias=False
+        )
+
+    else:
+        # instantiate the conv
+        raise ValueError(f"Unknown conv_type={conv_type}")
+
+    return spconv.SparseSequential(
         conv,
         norm_fn(out_channels),
-        nn.ReLU(),
+        nn.ReLU(inplace=True),
     )
-
-    return m
-
 
 class SparseBasicBlock(spconv.SparseModule):
     expansion = 1

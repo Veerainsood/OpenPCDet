@@ -15,6 +15,8 @@ from .pillarnet import PillarNet
 from .voxelnext import VoxelNeXt
 from .transfusion import TransFusion
 from .bevfusion import BevFusion
+from .pvt_ssd import PVTSSD
+from .detector3d_template import Detector3DTemplate
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -35,12 +37,14 @@ __all__ = {
     'VoxelNeXt': VoxelNeXt,
     'TransFusion': TransFusion,
     'BevFusion': BevFusion,
+    'PVTSSD': PVTSSD,
+    'Detector3DTemplate': Detector3DTemplate,
 }
 
 
-def build_detector(model_cfg, num_class, dataset):
+def build_detector(model_cfg, num_class, dataset, logger):
     model = __all__[model_cfg.NAME](
-        model_cfg=model_cfg, num_class=num_class, dataset=dataset
+        model_cfg=model_cfg, num_class=num_class, dataset=dataset, logger=logger
     )
 
     return model

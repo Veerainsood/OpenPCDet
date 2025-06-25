@@ -7,7 +7,7 @@ import torchvision
 from ...utils import box_utils, common_utils
 
 tv = None
-try:
+try:    
     import cumm.tensorview as tv
 except:
     pass
@@ -91,7 +91,22 @@ class DataProcessor(object):
             )
             data_dict['gt_boxes'] = data_dict['gt_boxes'][mask]
         return data_dict
+# Modified---------------------------------------------------------------------------------------------------------------------------------------------------------------
+    def mask_points_and_boxes_outside_range_pvt(self, data_dict=None, config=None): #Changes affected in yaml configs in the OpenPCDET/tools/cfgs/dataset_configs/kitty , waymo , waymo
+        if data_dict is None:
+            return partial(self.mask_points_and_boxes_outside_range_pvt, config=config)
 
+        if data_dict.get('points', None) is not None:
+            mask = common_utils.mask_points_by_range(data_dict['points'], self.point_cloud_range)
+            data_dict['points'] = data_dict['points'][mask]
+
+        if data_dict.get('gt_boxes', None) is not None and config.REMOVE_OUTSIDE_BOXES and self.training:
+            mask = box_utils.mask_boxes_outside_range_numpy_pvt(
+                data_dict['gt_boxes'], self.point_cloud_range, min_num_corners=config.get('min_num_corners', 1), 
+            )
+            data_dict['gt_boxes'] = data_dict['gt_boxes'][mask]
+        return data_dict
+# Modified---------------------------------------------------------------------------------------------------------------------------------------------------------------
     def shuffle_points(self, data_dict=None, config=None):
         if data_dict is None:
             return partial(self.shuffle_points, config=config)

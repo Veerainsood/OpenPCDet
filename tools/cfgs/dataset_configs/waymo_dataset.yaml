@@ -2,6 +2,8 @@ DATASET: 'WaymoDataset'
 DATA_PATH: '../data/waymo'
 PROCESSED_DATA_TAG: 'waymo_processed_data_v0_5_0'
 
+NUM_SWEEPS: 1
+USE_TIME_LAG: False
 POINT_CLOUD_RANGE: [-75.2, -75.2, -2, 75.2, 75.2, 4]
 
 DATA_SPLIT: {
@@ -45,18 +47,26 @@ DATA_AUGMENTOR:
 
           SAMPLE_GROUPS: ['Vehicle:15', 'Pedestrian:10', 'Cyclist:10']
           NUM_POINT_FEATURES: 5
+          REMOVE_POINTS: False
           REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
           LIMIT_WHOLE_SCENE: True
 
         - NAME: random_world_flip
+          PROBABILITY: 0.5
           ALONG_AXIS_LIST: ['x', 'y']
 
         - NAME: random_world_rotation
+          PROBABILITY: 1.0
           WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
 
         - NAME: random_world_scaling
+          PROBABILITY: 1.0
           WORLD_SCALE_RANGE: [0.95, 1.05]
-
+# Added ----------------------------------------
+        - NAME: random_world_translation
+          PROBABILITY: 1.0
+          NOISE_TRANSLATE_STD: 0.5
+# Added ----------------------------------------
 
 POINT_FEATURE_ENCODING: {
     encoding_type: absolute_coordinates_encoding,
@@ -66,7 +76,7 @@ POINT_FEATURE_ENCODING: {
 
 
 DATA_PROCESSOR:
-    - NAME: mask_points_and_boxes_outside_range
+    - NAME: mask_points_and_boxes_outside_range_pvt
       REMOVE_OUTSIDE_BOXES: True
 
     - NAME: shuffle_points

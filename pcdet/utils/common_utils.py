@@ -5,11 +5,74 @@ import random
 import shutil
 import subprocess
 import SharedArray
-
+from torch.nn import functional as F
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+
+def bilinear_interpolate_torch(im, x, y):
+    """
+    Args:
+        im: (H, W, C) [y, x]
+        x: (N)
+        y: (N)
+
+    Returns:
+
+    """
+    x0 = torch.floor(x).long()
+    x1 = x0 + 1
+
+    y0 = torch.floor(y).long()
+    y1 = y0 + 1
+
+    x0 = torch.clamp(x0, 0, im.shape[1] - 1)
+    x1 = torch.clamp(x1, 0, im.shape[1] - 1)
+    y0 = torch.clamp(y0, 0, im.shape[0] - 1)
+    y1 = torch.clamp(y1, 0, im.shape[0] - 1)
+
+    Ia = im[y0, x0]
+    Ib = im[y1, x0]
+    Ic = im[y0, x1]
+    Id = im[y1, x1]
+
+    wa = (x1.type_as(x) - x) * (y1.type_as(y) - y)
+    wb = (x1.type_as(x) - x) * (y - y0.type_as(y))
+    wc = (x - x0.type_as(x)) * (y1.type_as(y) - y)
+    wd = (x - x0.type_as(x)) * (y - y0.type_as(y))
+    ans = torch.t((torch.t(Ia) * wa)) + torch.t(torch.t(Ib) * wb) + torch.t(torch.t(Ic) * wc) + torch.t(torch.t(Id) * wd)
+    return ans
+
+
+def random_masking(N, L, mask_ratio, device):
+    """
+    Perform per-sample random masking by per-sample shuffling.
+    Per-sample shuffling is done by argsort random noise.
+    """
+    len_keep = int(L * (1 - mask_ratio))
+    noise = torch.rand(N, L, device=device)  # noise in [0, 1]
+    # sort noise for each sample
+    ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
+    # keep the first subset
+    ids_keep = ids_shuffle[:, :len_keep]
+    # generate the binary mask: 0 is keep, 1 is remove
+    mask = torch.ones([N, L], device=device)
+    mask.scatter_(1, ids_keep, 0)
+    return mask
+
+
+def get_in_range_mask(points, pc_range, voxel_size, grid_size):
+    if not isinstance(pc_range, torch.Tensor):
+        pc_range = points.new_tensor(pc_range)
+    if not isinstance(voxel_size, torch.Tensor):
+        voxel_size = points.new_tensor(voxel_size)
+    if not isinstance(grid_size, torch.Tensor):
+        grid_size = points.new_tensor(grid_size).to(torch.int64)
+        
+    coords = ((points[:, 1:4] - pc_range[:3]) / voxel_size).to(torch.int64)
+    mask = torch.all((coords[:, :3] >= grid_size.new_zeros(grid_size.shape)) & (coords[:, :3] < grid_size), dim=-1)
+    return mask, coords
 
 
 def check_numpy_to_torch(x):
@@ -80,11 +143,11 @@ def mask_points_by_range(points, limit_range):
            & (points[:, 1] >= limit_range[1]) & (points[:, 1] <= limit_range[4])
     return mask
 
-
-def get_voxel_centers(voxel_coords, downsample_times, voxel_size, point_cloud_range):
+#Modified ------------------------------------------------------------------------------------
+def get_voxel_centers(voxel_coords, downsample_times, voxel_size, point_cloud_range, dim=3):
     """
     Args:
-        voxel_coords: (N, 3)
+        voxel_coords: (N, 3) or (N, 2)
         downsample_times:
         voxel_size:
         point_cloud_range:
@@ -92,13 +155,13 @@ def get_voxel_centers(voxel_coords, downsample_times, voxel_size, point_cloud_ra
     Returns:
 
     """
-    assert voxel_coords.shape[1] == 3
-    voxel_centers = voxel_coords[:, [2, 1, 0]].float()  # (xyz)
-    voxel_size = torch.tensor(voxel_size, device=voxel_centers.device).float() * downsample_times
-    pc_range = torch.tensor(point_cloud_range[0:3], device=voxel_centers.device).float()
+    # assert voxel_coords.shape[1] == 3
+    voxel_centers = torch.flip(voxel_coords, dims=[-1]).float()  # (x, y, z) or (x, y)
+    voxel_size = torch.tensor(voxel_size[:dim], device=voxel_centers.device).float() * downsample_times
+    pc_range = torch.tensor(point_cloud_range[:dim], device=voxel_centers.device).float()
     voxel_centers = (voxel_centers + 0.5) * voxel_size + pc_range
     return voxel_centers
-
+#Modified ------------------------------------------------------------------------------------
 
 def create_logger(log_file=None, rank=0, log_level=logging.INFO):
     logger = logging.getLogger(__name__)
@@ -250,6 +313,44 @@ def merge_results_dist(result_part, size, tmpdir):
     return ordered_results
 
 
+#Added-----------------------------------------------------------------------------------
+def generate_points2voxels(points, pc_range, voxel_size, batch_size, to_pillars=False):
+    """
+    Args:
+        points: (N1 + N2 +..., 4) [batch_idx, x, y, z], preassume points are in pc_range
+        pc_range: (6,), tensor type
+        voxel_size: (3,), tensor type
+    Return:
+        unique_coords: (M1 + M2 + ..., 3 or 4), [batch_idx, Y, X] or [batch_idx, Z, Y, X]
+        inverse_indices: (N1 + N2 + ...,), stacked index of unique_coords
+    """
+    ndim = 2 if to_pillars else 3
+
+    coords = ((points[:, 1:1 + ndim] - pc_range[:ndim]) / voxel_size[:ndim]).to(torch.int64)
+    coords = torch.cat([points[:, 0:1].long(), torch.flip(coords, dims=[-1])], dim=-1)
+    unique_coords, inverse_indices = coords.unique(sorted=False, return_inverse=True, dim=0)
+    
+    # stacked_batch_idx = points[:, 0]
+    # stacked_points = points[:, 1:]
+
+    # unique_coords_list = []
+    # inverse_indices_list = []
+    # pre_sum_idx = 0
+    # for batch_idx in range(batch_size):
+    #     cur_points = stacked_points[stacked_batch_idx == batch_idx]
+    #     cur_coords = ((cur_points[:, :ndim] - pc_range[:ndim]) / voxel_size[:ndim]).to(torch.int64)
+    #     cur_coords = torch.flip(cur_coords, dims=[-1])
+    #     cur_unique_coords, cur_inverse_indices = cur_coords.unique(sorted=False, return_inverse=True, dim=0)
+    #     unique_coords_list.append(F.pad(cur_unique_coords, (1, 0), mode='constant', value=batch_idx))
+    #     inverse_indices_list.append(cur_inverse_indices + pre_sum_idx)
+    #     pre_sum_idx += len(cur_unique_coords)
+    # unique_coords = torch.cat(unique_coords_list, dim=0)
+    # inverse_indices = torch.cat(inverse_indices_list, dim=0)
+    return unique_coords, inverse_indices
+#Added-----------------------------------------------------------------------------------
+
+
+
 def scatter_point_inds(indices, point_inds, shape):
     ret = -1 * torch.ones(*shape, dtype=point_inds.dtype, device=point_inds.device)
     ndim = indices.shape[-1]
@@ -257,7 +358,6 @@ def scatter_point_inds(indices, point_inds, shape):
     slices = [flattened_indices[:, i] for i in range(ndim)]
     ret[slices] = point_inds
     return ret
-
 
 def generate_voxel2pinds(sparse_tensor):
     device = sparse_tensor.indices.device
@@ -269,6 +369,18 @@ def generate_voxel2pinds(sparse_tensor):
     v2pinds_tensor = scatter_point_inds(indices, point_indices, output_shape)
     return v2pinds_tensor
 
+def generate_voxels2pinds(indices, spatial_shape, batch_size):
+    """
+    Args:
+        indices: (N1 + N2 + ..., 3 or 4) [batch_idx, Z, Y, X] or [batch_idx, Y, X]
+        spatial_shape: [Z, Y, X] or [Y, X], numpy type
+    Return:
+        v2pinds_tensor: (B, Z, Y, X) or (B, Y, X), stacked index of indices
+    """
+    point_indices = torch.arange(indices.shape[0], device=indices.device, dtype=torch.int32)
+    output_shape = [batch_size] + list(spatial_shape)
+    v2pinds_tensor = scatter_point_inds(indices, point_indices, output_shape)
+    return v2pinds_tensor
 
 def sa_create(name, var):
     x = SharedArray.create(name, var.shape, dtype=var.dtype)

@@ -15,6 +15,7 @@ INFO_PATH: {
 
 GET_ITEM_LIST: ["points"]
 FOV_POINTS_ONLY: True
+ENABLE_SIMILAR_TYPE: True
 
 DATA_AUGMENTOR:
     DISABLE_AUG_LIST: ['placeholder']
@@ -35,12 +36,15 @@ DATA_AUGMENTOR:
           LIMIT_WHOLE_SCENE: True
 
         - NAME: random_world_flip
+          PROBABILITY: 0.5
           ALONG_AXIS_LIST: ['x']
 
         - NAME: random_world_rotation
+          PROBABILITY: 1.0
           WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
 
         - NAME: random_world_scaling
+          PROBABILITY: 1.0
           WORLD_SCALE_RANGE: [0.95, 1.05]
 
 
@@ -52,7 +56,7 @@ POINT_FEATURE_ENCODING: {
 
 
 DATA_PROCESSOR:
-    - NAME: mask_points_and_boxes_outside_range
+    - NAME: mask_points_and_boxes_outside_range_pvt
       REMOVE_OUTSIDE_BOXES: True
 
     - NAME: shuffle_points

@@ -126,7 +126,6 @@ __global__ void three_interpolate_kernel_stack(int N, int channels, const float 
 }
 
 
-
 void three_interpolate_kernel_launcher_stack(int N, int channels,
     const float *features, const int *idx, const float *weight, float *out) {
     // features: (M1 + M2 ..., C)
@@ -192,4 +191,86 @@ void three_interpolate_grad_kernel_launcher_stack(int N, int channels, const flo
         fprintf(stderr, "CUDA kernel failed : %s\n", cudaGetErrorString(err));
         exit(-1);
     }
+}
+
+
+__global__ void k_interpolate_kernel_stack(int N, int K, int channels, const float *features, 
+    const int *idx, const float *weight, float *out) {
+    // features: (M1 + M2 ..., C)
+    // idx: [N1 + N2 ..., K]
+    // weight: [N1 + N2 ..., K]
+    // Return:
+    // out: (N1 + N2 ..., C)
+
+    int c_idx = blockIdx.y;
+    int pt_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (pt_idx >= N || c_idx >= channels) return;
+
+    weight += pt_idx * K;
+    idx += pt_idx * K;
+    out += pt_idx * channels + c_idx;
+    
+    float sum = 0;
+    int s_idx = -1;
+    for (int i = 0; i < K; ++i) {
+        s_idx = idx[i];
+        if (s_idx == -1) 
+            continue;
+        sum += weight[i] * features[s_idx * channels + c_idx];
+    }
+    out[0] = sum;
+}
+
+
+void k_interpolate_kernel_launcher_stack(int N, int K, int channels,
+    const float *features, const int *idx, const float *weight, float *out) {
+    // features: (M1 + M2 ..., C)
+    // idx: [N1 + N2 ..., K]
+    // weight: [N1 + N2 ..., K]
+    // Return:
+    // out: (N1 + N2 ..., C)
+    dim3 blocks(DIVUP(N, THREADS_PER_BLOCK), channels);
+    dim3 threads(THREADS_PER_BLOCK);
+    k_interpolate_kernel_stack<<<blocks, threads>>>(N, K, channels, features, idx, weight, out);
+}
+
+
+__global__ void k_interpolate_grad_kernel_stack(int N, int K, int channels, const float *grad_out, 
+    const int *idx, const float *weight, float *grad_features) {
+    // grad_out_tensor: (N1 + N2 ..., C)
+    // idx_tensor: [N1 + N2 ..., K]
+    // weight_tensor: [N1 + N2 ..., K]
+    // Return:
+    // grad_features_tensor: (M1 + M2 ..., C)
+
+    int c_idx = blockIdx.y;
+    int pt_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (pt_idx >= N || c_idx >= channels) return;
+
+    grad_out += pt_idx * channels + c_idx;
+    weight += pt_idx * K;
+    idx += pt_idx * K;
+    int s_idx = -1;
+    for (int i = 0; i < K; ++i) {
+        s_idx = idx[i];
+        if (s_idx == -1) 
+            continue;
+        atomicAdd(grad_features + s_idx * channels + c_idx, grad_out[0] * weight[i]);
+    }
+}
+
+
+void k_interpolate_grad_kernel_launcher_stack(int N, int K, int channels, const float *grad_out, 
+    const int *idx, const float *weight, float *grad_features) {
+    // grad_out_tensor: (N1 + N2 ..., C)
+    // idx_tensor: [N1 + N2 ..., 3]
+    // weight_tensor: [N1 + N2 ..., 3]
+    // Return:
+    // grad_features_tensor: (M1 + M2 ..., C)
+
+    dim3 blocks(DIVUP(N, THREADS_PER_BLOCK), channels);  // blockIdx.x(col), blockIdx.y(row)
+    dim3 threads(THREADS_PER_BLOCK);
+    k_interpolate_grad_kernel_stack<<<blocks, threads>>>(
+        N, K, channels, grad_out, idx, weight, grad_features
+    );
 }

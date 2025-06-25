@@ -149,7 +149,7 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
 
 def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_cfg,
                 start_epoch, total_epochs, start_iter, rank, tb_log, ckpt_save_dir, train_sampler=None,
-                lr_warmup_scheduler=None, ckpt_save_interval=1, max_ckpt_save_num=50,
+                lr_warmup_scheduler=None, ckpt_save_interval=1, max_ckpt_save_num=81,
                 merge_all_iters_to_one_epoch=False, use_amp=False,
                 use_logger_to_record=False, logger=None, logger_iter_interval=None, ckpt_save_time_interval=None, show_gpu_stat=False, cfg=None):
     accumulated_iter = start_iter
@@ -157,7 +157,8 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
     # use for disable data augmentation hook
     hook_config = cfg.get('HOOK', None) 
     augment_disable_flag = False
-
+    total_epochs = 1
+    start_epoch = 1
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
         total_it_each_epoch = len(train_loader)
         if merge_all_iters_to_one_epoch:

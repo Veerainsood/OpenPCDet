@@ -105,3 +105,50 @@ void three_interpolate_grad_wrapper_stack(at::Tensor grad_out_tensor, at::Tensor
     // printf("N=%d, channels=%d\n", N, channels);
     three_interpolate_grad_kernel_launcher_stack(N, channels, grad_out, idx, weight, grad_features);
 }
+
+void k_interpolate_wrapper_stack(at::Tensor features_tensor, 
+    at::Tensor idx_tensor, at::Tensor weight_tensor, at::Tensor out_tensor) {
+    // features_tensor: (M1 + M2 ..., C)
+    // idx_tensor: [N1 + N2 ..., K]
+    // weight_tensor: [N1 + N2 ..., K]
+    // Return:
+    // out_tensor: (N1 + N2 ..., C)
+    CHECK_INPUT(features_tensor);
+    CHECK_INPUT(idx_tensor);
+    CHECK_INPUT(weight_tensor);
+    CHECK_INPUT(out_tensor);
+
+    int N = out_tensor.size(0);
+    int K = idx_tensor.size(1);
+    int channels = features_tensor.size(1);
+    const float *features = features_tensor.data_ptr<float>();
+    const float *weight = weight_tensor.data_ptr<float>();
+    const int *idx = idx_tensor.data_ptr<int>();
+    float *out = out_tensor.data_ptr<float>();
+
+    k_interpolate_kernel_launcher_stack(N, K, channels, features, idx, weight, out);
+}
+
+
+void k_interpolate_grad_wrapper_stack(at::Tensor grad_out_tensor, at::Tensor idx_tensor,
+    at::Tensor weight_tensor, at::Tensor grad_features_tensor) {
+    // grad_out_tensor: (N1 + N2 ..., C)
+    // idx_tensor: [N1 + N2 ..., K]
+    // weight_tensor: [N1 + N2 ..., K]
+    // Return:
+    // grad_features_tensor: (M1 + M2 ..., C)
+    CHECK_INPUT(grad_out_tensor);
+    CHECK_INPUT(idx_tensor);
+    CHECK_INPUT(weight_tensor);
+    CHECK_INPUT(grad_features_tensor);
+
+    int N = grad_out_tensor.size(0);
+    int K = idx_tensor.size(1);
+    int channels = grad_out_tensor.size(1);
+    const float *grad_out = grad_out_tensor.data_ptr<float>();
+    const float *weight = weight_tensor.data_ptr<float>();
+    const int *idx = idx_tensor.data_ptr<int>();
+    float *grad_features = grad_features_tensor.data_ptr<float>();
+    
+    k_interpolate_grad_kernel_launcher_stack(N, K, channels, grad_out, idx, weight, grad_features);
+}

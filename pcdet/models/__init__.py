@@ -11,11 +11,9 @@ except:
     pass 
     # print('Warning: kornia is not installed. This package is only required by CaDDN')
 
-
-
-def build_network(model_cfg, num_class, dataset):
+def build_network(model_cfg, num_class, dataset , logger):
     model = build_detector(
-        model_cfg=model_cfg, num_class=num_class, dataset=dataset
+        model_cfg=model_cfg, num_class=num_class, dataset=dataset, logger=logger
     )
     return model
 
@@ -26,7 +24,7 @@ def load_data_to_gpu(batch_dict):
             batch_dict[key] = val.cuda()
         elif not isinstance(val, np.ndarray):
             continue
-        elif key in ['frame_id', 'metadata', 'calib', 'image_paths','ori_shape','img_process_infos']:
+        elif key in ['frame_id', 'metadata', 'calib', 'image_paths','ori_shape','img_process_infos', 'image_pad_shape', 'image_rescale_shape']:
             continue
         elif key in ['images']:
             batch_dict[key] = kornia.image_to_tensor(val).float().cuda().contiguous()
@@ -39,7 +37,7 @@ def load_data_to_gpu(batch_dict):
 def model_fn_decorator():
     ModelReturn = namedtuple('ModelReturn', ['loss', 'tb_dict', 'disp_dict'])
 
-    def model_func(model, batch_dict):
+    def model_func(model, batch_dict, **kwargs):
         load_data_to_gpu(batch_dict)
         ret_dict, tb_dict, disp_dict = model(batch_dict)
 

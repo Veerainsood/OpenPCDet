@@ -29,7 +29,7 @@ def build_local_aggregation_module(input_channels, config):
 
 class StackSAModuleMSG(nn.Module):
 
-    def __init__(self, *, radii: List[float], nsamples: List[int], mlps: List[List[int]],
+    def __init__(self, *, radii: List[float], nsamples: List[int], mlps: List[List[int]], out_channels=None,
                  use_xyz: bool = True, pool_method='max_pool'):
         """
         Args:
@@ -62,6 +62,19 @@ class StackSAModuleMSG(nn.Module):
                 ])
             self.mlps.append(nn.Sequential(*shared_mlps))
         self.pool_method = pool_method
+
+        self.out_aggregation = None
+        if out_channels is not None and len(out_channels) > 0:
+            in_channel = sum([mlp[-1] for mlp in mlps])
+            mlps = [in_channel] + out_channels
+            shared_mlps = []
+            for k in range(len(mlps) - 1):
+                shared_mlps.extend([
+                    nn.Conv1d(mlps[k], mlps[k + 1], kernel_size=1, bias=False),
+                    nn.BatchNorm1d(mlps[k + 1]),
+                    nn.ReLU()
+                ])
+            self.out_aggregation = nn.Sequential(*shared_mlps)
 
         self.init_weights()
 
@@ -104,11 +117,16 @@ class StackSAModuleMSG(nn.Module):
                 ).squeeze(dim=-1)  # (1, C, M1 + M2 ...)
             else:
                 raise NotImplementedError
-            new_features = new_features.squeeze(dim=0).permute(1, 0)  # (M1 + M2 ..., C)
             new_features_list.append(new_features)
 
         new_features = torch.cat(new_features_list, dim=1)  # (M1 + M2 ..., C)
+        #Modified -------------------------------
+        if self.out_aggregation is not None:
+            new_features = self.out_aggregation(new_features)
 
+        new_features = new_features.squeeze(dim=0).permute(1, 0).contiguous()  # (M1 + M2 ..., C)
+        #Modified -------------------------------
+            
         return new_xyz, new_features
 
 

@@ -158,6 +158,30 @@ class QueryAndGroup(nn.Module):
 
         return new_features, idx
 
+class FurthestPointSampling(Function):
+    @staticmethod
+    def forward(ctx, xyz: torch.Tensor, npoint: int):
+        """
+        Args:
+            ctx:
+            xyz: (B, N, 3) where N > npoint
+            npoint: int, number of features in the sampled set
+
+        Returns:
+            output: (B, npoint) tensor containing the set
+        """
+        assert xyz.is_contiguous()
+
+        B, N, _ = xyz.size()
+        output = torch.cuda.IntTensor(B, npoint)
+        temp = torch.cuda.FloatTensor(B, N).fill_(1e10)
+
+        pointnet2.furthest_point_sampling_wrapper(B, N, npoint, xyz, temp, output)
+        return output
+
+    @staticmethod
+    def backward(xyz, a=None):
+        return None, None
 
 class FarthestPointSampling(Function):
     @staticmethod
@@ -185,7 +209,7 @@ class FarthestPointSampling(Function):
         return None, None
 
 
-farthest_point_sample = furthest_point_sample = FarthestPointSampling.apply
+farthest_point_sample  = FarthestPointSampling.apply
 
 
 class StackFarthestPointSampling(Function):
@@ -221,7 +245,7 @@ class StackFarthestPointSampling(Function):
     def backward(xyz, a=None):
         return None, None
 
-
+furthest_point_sample = FurthestPointSampling.apply
 stack_farthest_point_sample = StackFarthestPointSampling.apply
 
 
@@ -302,6 +326,46 @@ class ThreeInterpolate(Function):
 
 three_interpolate = ThreeInterpolate.apply
 
+class KInterpolate(Function):
+
+    @staticmethod
+    def forward(ctx, features: torch.Tensor, idx: torch.Tensor, weight: torch.Tensor):
+        """
+        Args:
+            ctx:
+            features: (M1 + M2 ..., C)
+            idx: [N1 + N2 ..., K]
+            weight: [N1 + N2 ..., K]
+
+        Returns:
+            out_tensor: (N1 + N2 ..., C)
+        """
+        assert idx.shape[0] == weight.shape[0] and idx.shape[1] == weight.shape[1]
+
+        ctx.k_interpolate_for_backward = (idx, weight, features.shape[0])
+        output = features.new_zeros((idx.shape[0], features.shape[1]))
+        pointnet2.k_interpolate_wrapper(features.contiguous(), idx.contiguous(), weight.contiguous(), output)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_out: torch.Tensor):
+        """
+        Args:
+            ctx:
+            grad_out: (N1 + N2 ..., C)
+
+        Returns:
+            grad_features: (M1 + M2 ..., C)
+        """
+        idx, weight, M = ctx.k_interpolate_for_backward
+        grad_features = grad_out.new_zeros((M, grad_out.shape[1]))
+        pointnet2.k_interpolate_grad_wrapper(
+            grad_out.contiguous(), idx.contiguous(), weight.contiguous(), grad_features
+        )
+        return grad_features, None, None
+
+
+k_interpolate = KInterpolate.apply
 
 class ThreeNNForVectorPoolByTwoStep(Function):
     @staticmethod

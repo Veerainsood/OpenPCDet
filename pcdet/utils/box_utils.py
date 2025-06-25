@@ -52,6 +52,70 @@ def boxes_to_corners_3d(boxes3d):
 
     return corners3d.numpy() if is_numpy else corners3d
 
+# Modifications ----------------------------------------
+def mask_boxes_outside_range_numpy(boxes, limit_range, min_num_corners=1, use_center_to_filter=True):
+    """
+    Args:
+        boxes: (N, 7) [x, y, z, dx, dy, dz, heading, ...], (x, y, z) is the box center
+        limit_range: [minx, miny, minz, maxx, maxy, maxz]
+        min_num_corners:
+
+    Returns:
+
+    """
+    if boxes.shape[1] > 7:
+        boxes = boxes[:, 0:7]
+    if use_center_to_filter:
+        box_centers = boxes[:, 0:3]
+        mask = ((box_centers >= limit_range[0:3]) & (box_centers <= limit_range[3:6])).all(axis=-1)
+    else:
+        corners = boxes_to_corners_3d(boxes)  # (N, 8, 3)
+        corners = corners[:, :, 0:3]
+        mask = ((corners >= limit_range[0:2]) & (corners <= limit_range[3:5])).all(axis=2)
+        mask = mask.sum(axis=1) >= min_num_corners  # (N)
+
+    return mask
+
+def mask_boxes_outside_range_numpy_pvt(boxes, limit_range, min_num_corners=1):
+    """
+    Args:
+        boxes: (N, 7) [x, y, z, dx, dy, dz, heading, ...], (x, y, z) is the box center
+        limit_range: [minx, miny, minz, maxx, maxy, maxz]
+        min_num_corners:
+
+    Returns:
+
+    """
+    if boxes.shape[1] > 7:
+        boxes = boxes[:, 0:7]
+    corners = boxes_to_corners_3d(boxes)  # (N, 8, 3)
+    mask = ((corners >= limit_range[0:3]) & (corners <= limit_range[3:6])).all(axis=2)
+    mask = mask.sum(axis=1) >= min_num_corners  # (N)
+
+    return mask
+
+def generate_centerness_mask(points, boxes):
+    """
+    Args:
+        points: (N, 3)
+        boxes: (N, 7)
+    """
+    offset_xyz = points - boxes[:, 0:3]
+    offset_xyz_canical = common_utils.rotate_points_along_z(offset_xyz.unsqueeze(dim=1), -boxes[:, 6]).squeeze(dim=1)
+
+    template = boxes.new_tensor([[1, 1, 1], [-1, -1, -1]]) / 2  # (2, 3)
+    margin = boxes[:, None, 3:6].repeat(1, 2, 1) * template[None, :, :]
+    distance = margin - offset_xyz_canical[:, None, :].repeat(1, 2, 1)
+    distance[:, 1, :] = -1 * distance[:, 1, :]
+    distance_min = torch.where(distance[:, 0, :] < distance[:, 1, :], distance[:, 0, :], distance[:, 1, :])
+    distance_max = torch.where(distance[:, 0, :] > distance[:, 1, :], distance[:, 0, :], distance[:, 1, :])
+
+    centerness = distance_min / distance_max
+    centerness = centerness[:, 0] * centerness[:, 1] * centerness[:, 2]
+    centerness = torch.pow(torch.clamp(centerness, min=1e-6), 1.0 / 3)
+
+    return centerness
+# Modifications ------------------------------
 def corners_rect_to_camera(corners):
     """
         7 -------- 4
@@ -88,30 +152,6 @@ def corners_rect_to_camera(corners):
     camera_rect = np.concatenate([center_point, np.array([length, height, width, rotation_y])])
 
     return camera_rect
-
-
-def mask_boxes_outside_range_numpy(boxes, limit_range, min_num_corners=1, use_center_to_filter=True):
-    """
-    Args:
-        boxes: (N, 7) [x, y, z, dx, dy, dz, heading, ...], (x, y, z) is the box center
-        limit_range: [minx, miny, minz, maxx, maxy, maxz]
-        min_num_corners:
-
-    Returns:
-
-    """
-    if boxes.shape[1] > 7:
-        boxes = boxes[:, 0:7]
-    if use_center_to_filter:
-        box_centers = boxes[:, 0:3]
-        mask = ((box_centers >= limit_range[0:3]) & (box_centers <= limit_range[3:6])).all(axis=-1)
-    else:
-        corners = boxes_to_corners_3d(boxes)  # (N, 8, 3)
-        corners = corners[:, :, 0:2]
-        mask = ((corners >= limit_range[0:2]) & (corners <= limit_range[3:5])).all(axis=2)
-        mask = mask.sum(axis=1) >= min_num_corners  # (N)
-
-    return mask
 
 
 def remove_points_in_boxes3d(points, boxes3d):

@@ -93,6 +93,8 @@ class WeightedSmoothL1Loss(nn.Module):
         """
         super(WeightedSmoothL1Loss, self).__init__()
         self.beta = beta
+        self.code_weights = code_weights
+
         if code_weights is not None:
             self.code_weights = np.array(code_weights, dtype=np.float32)
             self.code_weights = torch.from_numpy(self.code_weights).cuda()
@@ -131,8 +133,11 @@ class WeightedSmoothL1Loss(nn.Module):
 
         # anchor-wise weighting
         if weights is not None:
-            assert weights.shape[0] == loss.shape[0] and weights.shape[1] == loss.shape[1]
-            loss = loss * weights.unsqueeze(-1)
+            if len(weights.shape) == len(loss.shape) - 1:
+                weights = weights.unsqueeze(-1)
+            loss = loss * weights
+            # print("Loss per code: ", loss.shape," ",weights.shape)
+            # assert weights.shape[0] == loss.shape[0] and weights.shape[1] == loss.shape[1]
 
         return loss
 
@@ -149,7 +154,7 @@ class WeightedL1Loss(nn.Module):
             self.code_weights = np.array(code_weights, dtype=np.float32)
             self.code_weights = torch.from_numpy(self.code_weights).cuda()
 
-    @torch.cuda.amp.custom_fwd(cast_inputs=torch.float16)
+    @torch.amp.custom_fwd(cast_inputs=torch.float16,device_type='cuda')
     def forward(self, input: torch.Tensor, target: torch.Tensor, weights: torch.Tensor = None):
         """
         Args:
@@ -174,11 +179,38 @@ class WeightedL1Loss(nn.Module):
 
         # anchor-wise weighting
         if weights is not None:
-            assert weights.shape[0] == loss.shape[0] and weights.shape[1] == loss.shape[1]
-            loss = loss * weights.unsqueeze(-1)
+            if len(weights.shape) == len(loss.shape) - 1:
+                weights = weights.unsqueeze(-1)
+            # print("Then Came Here" , weights.shape , " ", loss.shape)
+            # assert weights.shape[0] == loss.shape[0] and weights.shape[1] == loss.shape[1]
+            loss = loss * weights
 
         return loss
 
+class WeightedBinaryCrossEntropyLoss(nn.Module):
+    """
+    Transform input to fit the fomation of PyTorch offical cross entropy loss
+    with anchor-wise weighting.
+    """
+    def __init__(self):
+        super(WeightedBinaryCrossEntropyLoss, self).__init__()
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor, weights: torch.Tensor):
+        """
+        Args:
+            input: (B, #anchors, #classes) float tensor.
+                Predited logits for each class.
+            target: (B, #anchors, #classes) float tensor.
+                One-hot classification targets.
+            weights: (B, #anchors) float tensor.
+                Anchor-wise weights.
+
+        Returns:
+            loss: (B, #anchors) float tensor.
+                Weighted cross entropy loss without reduction
+        """
+        loss = F.binary_cross_entropy_with_logits(input, target, reduction='none').mean(dim=-1) * weights
+        return loss
 
 class WeightedCrossEntropyLoss(nn.Module):
     """
@@ -208,7 +240,7 @@ class WeightedCrossEntropyLoss(nn.Module):
         return loss
 
 
-def get_corner_loss_lidar(pred_bbox3d: torch.Tensor, gt_bbox3d: torch.Tensor):
+def get_corner_loss_lidar(pred_bbox3d: torch.Tensor, gt_bbox3d: torch.Tensor, p=2):
     """
     Args:
         pred_bbox3d: (N, 7) float Tensor.
@@ -226,10 +258,17 @@ def get_corner_loss_lidar(pred_bbox3d: torch.Tensor, gt_bbox3d: torch.Tensor):
     gt_bbox3d_flip[:, 6] += np.pi
     gt_box_corners_flip = box_utils.boxes_to_corners_3d(gt_bbox3d_flip)
     # (N, 8)
-    corner_dist = torch.min(torch.norm(pred_box_corners - gt_box_corners, dim=2),
-                            torch.norm(pred_box_corners - gt_box_corners_flip, dim=2))
-    # (N, 8)
-    corner_loss = WeightedSmoothL1Loss.smooth_l1_loss(corner_dist, beta=1.0)
+    if p == 2:
+        corner_dist = torch.min(torch.norm(pred_box_corners - gt_box_corners, dim=2),
+        torch.norm(pred_box_corners - gt_box_corners_flip, dim=2))
+        # (N, 8)
+        corner_loss = WeightedSmoothL1Loss.smooth_l1_loss(corner_dist, beta=1.0)
+    else:
+        # (N, 8, 3)
+        corner_loss = WeightedSmoothL1Loss.smooth_l1_loss(pred_box_corners - gt_box_corners, beta=1.0)
+        corner_loss_flip = WeightedSmoothL1Loss.smooth_l1_loss(pred_box_corners - gt_box_corners_flip, beta=1.0)
+        corner_loss = torch.min(corner_loss.sum(dim=2), corner_loss_flip.sum(dim=2))
+
 
     return corner_loss.mean(dim=1)
 
@@ -417,8 +456,30 @@ class RegLossCenterNet(nn.Module):
             pred = _transpose_and_gather_feat(output, ind)
         loss = _reg_loss(pred, target, mask)
         return loss
+# Added-----------------------------------------------------------------
+class IoULossCenterNet(nn.Module):
+  '''IouLoss loss for an output tensor
+    Arguments:
+      output (batch x dim x h x w)
+      mask (batch x max_objects)
+      ind (batch x max_objects)
+      target (batch x max_objects x dim)
+  '''
 
+  def __init__(self):
+    super(IoULossCenterNet, self).__init__()
 
+  def forward(self, iou_pred, mask, ind, box_pred, box_gt):
+    mask = mask.bool()
+    pred = _transpose_and_gather_feat(iou_pred, ind)[mask]
+    pred_box = _transpose_and_gather_feat(box_pred, ind)
+    target = torch.diagonal(iou3d_nms_utils.boxes_iou3d_gpu(pred_box[mask], box_gt[mask])).unsqueeze(-1)
+    target = 2 * target - 1
+
+    loss = F.l1_loss(pred, target, reduction='sum')
+    loss = loss / (mask.sum() + 1e-4)
+    return loss
+# Added-----------------------------------------------------------------
 class FocalLossSparse(nn.Module):
     """
     Refer to https://github.com/tianweiy/CenterPoint

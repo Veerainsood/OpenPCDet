@@ -8,22 +8,30 @@ from ...utils.spconv_utils import find_all_spconv_keys
 from .. import backbones_2d, backbones_3d, dense_heads, roi_heads
 from ..backbones_2d import map_to_bev
 from ..backbones_3d import pfe, vfe
-from ..model_utils import model_nms_utils
+from ..model_utils import model_nms_utils, network_utils
 
 
 class Detector3DTemplate(nn.Module):
-    def __init__(self, model_cfg, num_class, dataset):
+    def __init__(self, model_cfg, num_class, dataset, logger=None):
         super().__init__()
         self.model_cfg = model_cfg
         self.num_class = num_class
         self.dataset = dataset
+        self.logger=logger
         self.class_names = dataset.class_names
         self.register_buffer('global_step', torch.LongTensor(1).zero_())
-
         self.module_topology = [
             'vfe', 'backbone_3d', 'map_to_bev_module', 'pfe',
             'backbone_2d', 'dense_head',  'point_head', 'roi_head'
         ]
+
+    def freeze(self, freeze_layers):
+        for cur_module in self.module_list:
+            if cur_module.__class__.__name__ in freeze_layers:
+                for param in cur_module.parameters():
+                    param.requires_grad = False
+                network_utils.FrozenBatchNorm.convert_frozen_batchnorm(cur_module)
+                self.logger.info('%s is freezed' % cur_module.__class__.__name__)
 
     @property
     def mode(self):
@@ -254,25 +262,44 @@ class Detector3DTemplate(nn.Module):
                     label_preds = batch_dict[label_key][index]
                 else:
                     label_preds = label_preds + 1 
-                selected, selected_scores = model_nms_utils.class_agnostic_nms(
-                    box_scores=cls_preds, box_preds=box_preds,
-                    nms_config=post_process_cfg.NMS_CONFIG,
-                    score_thresh=post_process_cfg.SCORE_THRESH
-                )
+                if post_process_cfg.NMS_CONFIG.get('NMS', True):
+                    if post_process_cfg.NMS_CONFIG.NMS_TYPE == 'nms_gpu':
+                        selected, selected_scores = model_nms_utils.class_agnostic_nms(
+                            box_scores=cls_preds, box_preds=box_preds,
+                            nms_config=post_process_cfg.NMS_CONFIG,
+                            score_thresh=post_process_cfg.SCORE_THRESH
+                        )
+                    elif post_process_cfg.NMS_CONFIG.NMS_TYPE == 'multi_class_nms':
+                        selected, selected_scores = model_nms_utils.multi_class_agnostic_nms(
+                            box_scores=cls_preds, box_labels=label_preds - 1,
+                            box_preds=box_preds, nms_config=post_process_cfg.NMS_CONFIG,
+                            score_thresh=post_process_cfg.SCORE_THRESH
+                        )
+                    else:
+                        raise NotImplementedError
+                else:
+                    selected_scores = cls_preds
 
                 if post_process_cfg.OUTPUT_RAW_SCORE:
                     max_cls_preds, _ = torch.max(src_cls_preds, dim=-1)
                     selected_scores = max_cls_preds[selected]
 
                 final_scores = selected_scores
-                final_labels = label_preds[selected]
-                final_boxes = box_preds[selected]
-                    
-            recall_dict = self.generate_recall_record(
-                box_preds=final_boxes if 'rois' not in batch_dict else src_box_preds,
-                recall_dict=recall_dict, batch_index=index, data_dict=batch_dict,
-                thresh_list=post_process_cfg.RECALL_THRESH_LIST
-            )        
+                if post_process_cfg.NMS_CONFIG.get('NMS', True):
+                    final_labels = label_preds[selected]
+                    final_boxes = box_preds[selected]
+                else:
+                    final_labels = label_preds
+                    final_boxes = box_preds
+
+            assert torch.sum(final_labels == 0) == 0                    
+
+            if post_process_cfg.get('RECALL_MODE', 'normal') == 'normal':
+                recall_dict = self.generate_recall_record(
+                    box_preds=final_boxes if 'rois' not in batch_dict else src_box_preds,
+                    recall_dict=recall_dict, batch_index=index, data_dict=batch_dict,
+                    thresh_list=post_process_cfg.RECALL_THRESH_LIST
+                )        
 
             record_dict = {
                 'pred_boxes': final_boxes,
@@ -364,7 +391,9 @@ class Detector3DTemplate(nn.Module):
 
         logger.info('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
         loc_type = torch.device('cpu') if to_cpu else None
-        checkpoint = torch.load(filename, map_location=loc_type)
+        torch.serialization.add_safe_globals([np._core.multiarray.scalar])
+        torch.serialization.add_safe_globals([np.dtype])
+        checkpoint = torch.load(filename, map_location=loc_type,weights_only=False)
         model_state_disk = checkpoint['model_state']
         if not pre_trained_path is None:
             pretrain_checkpoint = torch.load(pre_trained_path, map_location=loc_type)

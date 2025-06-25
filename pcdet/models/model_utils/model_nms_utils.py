@@ -25,6 +25,41 @@ def class_agnostic_nms(box_scores, box_preds, nms_config, score_thresh=None):
     return selected, src_box_scores[selected]
 
 
+def multi_class_agnostic_nms(box_scores, box_labels, box_preds, nms_config, box_ious=None, score_thresh=None):
+    if box_ious is not None:
+        iou_rectifier = box_scores.new_tensor(nms_config.IOU_RECTIFIER)
+        iou_rectifier = iou_rectifier[box_labels]
+        rect_scores = torch.pow(box_scores, 1 - iou_rectifier) * torch.pow(box_ious, iou_rectifier)
+    else:
+        rect_scores = box_scores
+
+    if score_thresh is not None:
+        scores_mask = (rect_scores >= score_thresh)
+        box_scores = rect_scores[scores_mask]
+        box_labels = box_labels[scores_mask]
+        box_preds = box_preds[scores_mask]
+    
+    selected = []
+    for cls in range(len(nms_config.NMS_THRESH)):
+        class_mask = box_labels == cls
+        if class_mask.sum() > 0:
+            src_idx = class_mask.nonzero(as_tuple=True)[0]
+            box_scores_nms, indices = torch.topk(box_scores[class_mask], k=min(nms_config.NMS_PRE_MAXSIZE[cls], box_scores[class_mask].shape[0]))
+            boxes_for_nms = box_preds[class_mask][indices]
+            keep_idx, _ = iou3d_nms_utils.nms_gpu(
+                boxes_for_nms[:, 0:7], box_scores_nms, nms_config.NMS_THRESH[cls]
+            )
+            per_selected = src_idx[indices[keep_idx[:nms_config.NMS_POST_MAXSIZE[cls]]]]
+            selected.append(per_selected)
+    if len(selected) > 0:
+        selected = torch.cat(selected, dim=0)
+
+    if score_thresh is not None:
+        original_idxs = scores_mask.nonzero(as_tuple=True)[0]
+        selected = original_idxs[selected]
+        
+    return selected, rect_scores[selected]
+
 def multi_classes_nms(cls_scores, box_preds, nms_config, score_thresh=None):
     """
     Args:
