@@ -18,7 +18,28 @@ from .bevfusion import BevFusion
 from .pvt_ssd import PVTSSD
 from .detector3d_template import Detector3DTemplate
 
-__all__ = {
+__all__ = ("Detector3DTemplate",
+           "SECONDNet",
+           "PartA2Net",
+           "PVRCNN" ,
+           "PointPillar",
+           "PointRCNN",
+           "SECONDNetIoU",
+           "CaDDN",
+           "VoxelRCNN",
+           "CenterPoint",
+           "PillarNet",
+           "PVRCNNPlusPlus",
+           "MPPNet",
+           "MPPNetE2E",
+           "PillarNet",
+           "VoxelNeXt",
+           "TransFusion",
+           "BevFusion",
+           "PVTSSD",
+           "Detector3DTemplate")
+
+availableModels = {
     'Detector3DTemplate': Detector3DTemplate,
     'SECONDNet': SECONDNet,
     'PartA2Net': PartA2Net,
@@ -43,7 +64,7 @@ __all__ = {
 
 
 def build_detector(model_cfg, num_class, dataset, logger):
-    model = __all__[model_cfg.NAME](
+    model = availableModels[model_cfg.NAME](
         model_cfg=model_cfg, num_class=num_class, dataset=dataset, logger=logger
     )
 

@@ -7,7 +7,7 @@ from ...model_utils.network_utils import make_fc_layers
 from functools import partial
 from ....utils import common_utils
 
-
+# Dynamic Voxel Feature Encoder
 class DynVFE(VFETemplate):
     def __init__(self, model_cfg, num_point_features, voxel_size, point_cloud_range, grid_size, **kwargs):
         super().__init__(model_cfg=model_cfg)

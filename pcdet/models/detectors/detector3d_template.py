@@ -31,7 +31,8 @@ class Detector3DTemplate(nn.Module):
                 for param in cur_module.parameters():
                     param.requires_grad = False
                 network_utils.FrozenBatchNorm.convert_frozen_batchnorm(cur_module)
-                self.logger.info('%s is freezed' % cur_module.__class__.__name__)
+                if self.logger is not None:
+                    self.logger.info('%s is freezed' % cur_module.__class__.__name__)
 
     @property
     def mode(self):
@@ -55,6 +56,7 @@ class Detector3DTemplate(nn.Module):
                 model_info_dict=model_info_dict
             )
             self.add_module(module_name, module)
+        self.module_list = model_info_dict['module_list']
         return model_info_dict['module_list']
 
     def build_vfe(self, model_info_dict):
@@ -256,13 +258,14 @@ class Detector3DTemplate(nn.Module):
                 final_labels = torch.cat(pred_labels, dim=0)
                 final_boxes = torch.cat(pred_boxes, dim=0)
             else:
+                assert isinstance(cls_preds, torch.Tensor) # dont do asser type() = torch.tensor... subclasses are ignored
                 cls_preds, label_preds = torch.max(cls_preds, dim=-1)
                 if batch_dict.get('has_class_labels', False):
                     label_key = 'roi_labels' if 'roi_labels' in batch_dict else 'batch_pred_labels'
                     label_preds = batch_dict[label_key][index]
                 else:
                     label_preds = label_preds + 1 
-                if post_process_cfg.NMS_CONFIG.get('NMS', True):
+                if post_process_cfg.NMS_CONFIG.get('NMS', True): #non max suppression
                     if post_process_cfg.NMS_CONFIG.NMS_TYPE == 'nms_gpu':
                         selected, selected_scores = model_nms_utils.class_agnostic_nms(
                             box_scores=cls_preds, box_preds=box_preds,
@@ -279,8 +282,10 @@ class Detector3DTemplate(nn.Module):
                         raise NotImplementedError
                 else:
                     selected_scores = cls_preds
+                    selected = torch.arange(box_preds.shape[0], device=box_preds.device)
 
                 if post_process_cfg.OUTPUT_RAW_SCORE:
+                    assert isinstance(src_cls_preds,torch.Tensor)
                     max_cls_preds, _ = torch.max(src_cls_preds, dim=-1)
                     selected_scores = max_cls_preds[selected]
 
@@ -312,7 +317,7 @@ class Detector3DTemplate(nn.Module):
 
     @staticmethod
     def generate_recall_record(box_preds, recall_dict, batch_index, data_dict=None, thresh_list=None):
-        if 'gt_boxes' not in data_dict:
+        if data_dict is None or 'gt_boxes' not in data_dict:
             return recall_dict
 
         rois = data_dict['rois'][batch_index] if 'rois' in data_dict else None
@@ -320,9 +325,10 @@ class Detector3DTemplate(nn.Module):
 
         if recall_dict.__len__() == 0:
             recall_dict = {'gt': 0}
-            for cur_thresh in thresh_list:
-                recall_dict['roi_%s' % (str(cur_thresh))] = 0
-                recall_dict['rcnn_%s' % (str(cur_thresh))] = 0
+            if thresh_list is not None:
+                for cur_thresh in thresh_list:
+                    recall_dict['roi_%s' % (str(cur_thresh))] = 0
+                    recall_dict['rcnn_%s' % (str(cur_thresh))] = 0
 
         cur_gt = gt_boxes
         k = cur_gt.__len__() - 1
@@ -338,16 +344,17 @@ class Detector3DTemplate(nn.Module):
 
             if rois is not None:
                 iou3d_roi = iou3d_nms_utils.boxes_iou3d_gpu(rois[:, 0:7], cur_gt[:, 0:7])
-
-            for cur_thresh in thresh_list:
-                if iou3d_rcnn.shape[0] == 0:
-                    recall_dict['rcnn_%s' % str(cur_thresh)] += 0
-                else:
-                    rcnn_recalled = (iou3d_rcnn.max(dim=0)[0] > cur_thresh).sum().item()
-                    recall_dict['rcnn_%s' % str(cur_thresh)] += rcnn_recalled
-                if rois is not None:
-                    roi_recalled = (iou3d_roi.max(dim=0)[0] > cur_thresh).sum().item()
-                    recall_dict['roi_%s' % str(cur_thresh)] += roi_recalled
+            
+            if thresh_list is not None:
+                for cur_thresh in thresh_list:
+                    if iou3d_rcnn.shape[0] == 0:
+                        recall_dict['rcnn_%s' % str(cur_thresh)] += 0
+                    else:
+                        rcnn_recalled = (iou3d_rcnn.max(dim=0)[0] > cur_thresh).sum().item()
+                        recall_dict['rcnn_%s' % str(cur_thresh)] += rcnn_recalled
+                    if rois is not None:
+                        roi_recalled = (iou3d_roi.max(dim=0)[0] > cur_thresh).sum().item() # type: ignore
+                        recall_dict['roi_%s' % str(cur_thresh)] += roi_recalled
 
             recall_dict['gt'] += cur_gt.shape[0]
         else:
@@ -391,7 +398,6 @@ class Detector3DTemplate(nn.Module):
 
         logger.info('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
         loc_type = torch.device('cpu') if to_cpu else None
-        torch.serialization.add_safe_globals([np._core.multiarray.scalar])
         torch.serialization.add_safe_globals([np.dtype])
         checkpoint = torch.load(filename, map_location=loc_type,weights_only=False)
         model_state_disk = checkpoint['model_state']
@@ -415,8 +421,8 @@ class Detector3DTemplate(nn.Module):
     def load_params_with_optimizer(self, filename, to_cpu=False, optimizer=None, logger=None):
         if not os.path.isfile(filename):
             raise FileNotFoundError
-
-        logger.info('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
+        if logger is not None:
+            logger.info('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
         loc_type = torch.device('cpu') if to_cpu else None
         checkpoint = torch.load(filename, map_location=loc_type)
         epoch = checkpoint.get('epoch', -1)
@@ -426,7 +432,8 @@ class Detector3DTemplate(nn.Module):
 
         if optimizer is not None:
             if 'optimizer_state' in checkpoint and checkpoint['optimizer_state'] is not None:
-                logger.info('==> Loading optimizer parameters from checkpoint %s to %s'
+                if logger is not None:
+                    logger.info('==> Loading optimizer parameters from checkpoint %s to %s'
                             % (filename, 'CPU' if to_cpu else 'GPU'))
                 optimizer.load_state_dict(checkpoint['optimizer_state'])
             else:
@@ -439,6 +446,7 @@ class Detector3DTemplate(nn.Module):
 
         if 'version' in checkpoint:
             print('==> Checkpoint trained from version: %s' % checkpoint['version'])
-        logger.info('==> Done')
+        if logger is not None:
+            logger.info('==> Done')
 
         return it, epoch

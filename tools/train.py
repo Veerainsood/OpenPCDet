@@ -4,11 +4,11 @@ import datetime
 import glob
 import os
 from pathlib import Path
-from test import repeat_eval_ckpt
+from test import repeat_eval_ckpt # type: ignore
 
 import torch
 import torch.nn as nn
-from tensorboardX import SummaryWriter
+from tensorboardX import SummaryWriter # type: ignore
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import build_dataloader
@@ -82,26 +82,27 @@ def main():
     if args.batch_size is None:
         args.batch_size = cfg.OPTIMIZATION.BATCH_SIZE_PER_GPU
     else:
-        assert args.batch_size % total_gpus == 0, 'Batch size should match the number of gpus'
-        args.batch_size = args.batch_size // total_gpus
+        assert args.batch_size % total_gpus == 0, 'Batch size should be an integral multiple of # of gpus'
+        args.batch_size = args.batch_size // total_gpus # integral multiple is important so as not to miss batches
 
-    args.epochs = cfg.OPTIMIZATION.NUM_EPOCHS if args.epochs is None else args.epochs
+    args.epochs = cfg.OPTIMIZATION.NUM_EPOCHS if args.epochs is None else args.epochs #choose epochs from yaml file otherwise 
+    # override from user input during argument passing from commandline
 
     if args.fix_random_seed:
-        common_utils.set_random_seed(666 + cfg.LOCAL_RANK)
+        common_utils.set_random_seed(666 + cfg.LOCAL_RANK) # used for reproducability
 
-    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
-    ckpt_dir = output_dir / 'ckpt'
-    output_dir.mkdir(parents=True, exist_ok=True)
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag #for saving outputs
+    ckpt_dir = output_dir / 'ckpt' # for saving checkpoints
+    output_dir.mkdir(parents=True, exist_ok=True) # make dir if not existing, otherwise leave as it is
+    ckpt_dir.mkdir(parents=True, exist_ok=True) # make dir if not existing, otherwise leave as it is
 
-    log_file = output_dir / ('train_%s.log' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
-    logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK)
+    log_file = output_dir / ('train_%s.log' % datetime.datetime.now().strftime('%Y%m%d-%H%M%S')) #creates log file
+    logger = common_utils.create_logger(log_file, rank=cfg.LOCAL_RANK) # makes a logger
 
     # log to file
     logger.info('**********************Start logging**********************')
-    gpu_list = os.environ['CUDA_VISIBLE_DEVICES'] if 'CUDA_VISIBLE_DEVICES' in os.environ.keys() else 'ALL'
-    logger.info('CUDA_VISIBLE_DEVICES=%s' % gpu_list)
+    gpu_list = os.environ['CUDA_VISIBLE_DEVICES'] if 'CUDA_VISIBLE_DEVICES' in os.environ.keys() else 'ALL' 
+    logger.info('CUDA_VISIBLE_DEVICES=%s' % gpu_list) # logs the gpus visible to this python enviornment
 
     if dist_train:
         logger.info('Training in distributed mode : total_batch_size: %d' % (total_gpus * args.batch_size))
@@ -109,19 +110,20 @@ def main():
         logger.info('Training with a single process')
         
     for key, val in vars(args).items():
-        logger.info('{:16} {}'.format(key, val))
+        logger.info('{:16} {}'.format(key, val)) # logs the passed arguments and their loaded values....
     log_config_to_file(cfg, logger=logger)
     if cfg.LOCAL_RANK == 0:
-        os.system('cp %s %s' % (args.cfg_file, output_dir))
+        os.system('cp %s %s' % (args.cfg_file, output_dir)) # logs the config file to output dir , given writing permission (Rank 0)
 
     tb_log = SummaryWriter(log_dir=str(output_dir / 'tensorboard')) if cfg.LOCAL_RANK == 0 else None
 
     logger.info("----------- Create dataloader & network & optimizer -----------")
     train_set, train_loader, train_sampler = build_dataloader(
-        dataset_cfg=cfg.DATA_CONFIG,
+        dataset_cfg=cfg.DATA_CONFIG,# how is data structured
         class_names=cfg.CLASS_NAMES,
         batch_size=args.batch_size,
-        dist=dist_train, workers=args.workers,
+        dist=dist_train, 
+        workers=args.workers,
         logger=logger,
         training=True,
         merge_all_iters_to_one_epoch=args.merge_all_iters_to_one_epoch,
@@ -140,10 +142,10 @@ def main():
     start_epoch = it = 0
     last_epoch = -1
     if args.pretrained_model is not None:
-        model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
+        model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger) # type: ignore
 
     if args.ckpt is not None:
-        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger)
+        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger) # type: ignore
         last_epoch = start_epoch + 1
     else:
         ckpt_list = glob.glob(str(ckpt_dir / '*.pth'))
@@ -154,7 +156,7 @@ def main():
                 try:
                     it, start_epoch = model.load_params_with_optimizer(
                         ckpt_list[-1], to_cpu=dist_train, optimizer=optimizer, logger=logger
-                    )
+                    ) # type: ignore
                     last_epoch = start_epoch + 1
                     break
                 except:

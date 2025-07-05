@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from tensorboardX import SummaryWriter
+from tensorboardX import SummaryWriter # type: ignore
 
 from eval_utils import eval_utils
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
@@ -127,7 +127,7 @@ def repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir
 
         if cfg.LOCAL_RANK == 0:
             for key, val in tb_dict.items():
-                tb_log.add_scalar(key, val, cur_epoch_id)
+                tb_log.add_scalar(key, val, cur_epoch_id) # type: ignore
 
         # record this epoch which has been evaluated
         with open(ckpt_record_file, 'a') as f:
@@ -198,12 +198,12 @@ def main():
         dist=dist_test, workers=args.workers, logger=logger, training=False
     )
 
-    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set)
+    model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=test_set) # type: ignore
     with torch.no_grad():
         if args.eval_all:
             repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=dist_test)
         else:
-            eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=dist_test)
+            eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=dist_test) # type: ignore
 
 
 if __name__ == '__main__':

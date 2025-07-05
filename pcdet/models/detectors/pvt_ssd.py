@@ -6,7 +6,11 @@ class PVTSSD(Detector3DTemplate):
         super().__init__(model_cfg=model_cfg, num_class=num_class, dataset=dataset, logger=logger)
         self.module_list = self.build_networks()
 
-    def forward(self, batch_dict):
+    def forward(self, **kwargs):
+        batch_dict = kwargs.get('batch_dict', None)
+        if batch_dict is None:
+            raise ValueError("Missing 'batch_dict' in forward arguments.")
+
         for cur_module in self.module_list:
             batch_dict = cur_module(batch_dict)
 
@@ -24,7 +28,7 @@ class PVTSSD(Detector3DTemplate):
     def get_training_loss(self):
         disp_dict = {}
 
-        loss_rpn, tb_dict = self.dense_head.get_loss()
+        loss_rpn, tb_dict = self.dense_head.get_loss() # type: ignore
         tb_dict = {
             'loss_rpn': loss_rpn.item(),
             **tb_dict
